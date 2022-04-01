@@ -12,6 +12,7 @@ RUN apt-get install -y build-essential cmake musl-dev gcc g++ libffi-dev libssl-
     && rm -rf /tmp/*
 
 ENV ALLOW_ROOT 1
+ENV EVENT_LOOP_POLICY="uvloop"
 
 EXPOSE 8000 9000
 

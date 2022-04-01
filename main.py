@@ -14,7 +14,7 @@ from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
                                      Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet)
+                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet, LBC)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -35,6 +35,7 @@ coin_map = {
     "PIVX": Pivx,
     "TZC": Trezarcoin,
     "XSN": Stakenet,
+    "LBRY": LBC,
 }
 
 coin = environ.get('PLUGIN_COIN')
@@ -49,7 +50,7 @@ environ['COST_HARD_LIMIT'] = '0'
 environ['INITIAL_CONCURRENT'] = '1000'
 environ['EVENT_LOOP_POLICY'] = 'uvloop'
 environ['PEER_ANNOUNCE'] = ''
-environ['SERVICES'] = 'tcp://:{},rpc://:{}'.format(int(port) + 1000, port)
+environ['SERVICES'] = 'tcp://:{},rpc://:{},ws://:50000'.format(int(port) + 1000, port)
 
 
 async def compact_history(env):

@@ -1,16 +1,21 @@
 import struct
+
 import lib.tx as lib_tx
 import lib.tx_dash as lib_tx_dash
 import lib.coins as BlockProc
 import electrumx.lib.util as util
 import electrumx.server.daemon as daemon
 import electrumx.server.block_processor as block_proc
-from dataclasses import dataclass
+
+from hashlib import sha256
+from electrumx.lib.script import OpCodes, _match_ops, ScriptPubKey
 from electrumx.lib.coins import AuxPowMixin, ScryptMixin, CoinError, Coin as CoinBase
-from electrumx.lib.hash import double_sha256, hash_to_hex_str
-from server.daemon import SyscoinDaemon
+from electrumx.lib.hash import double_sha256, hash_to_hex_str, HASHX_LEN
+
+from lib.tx_lbc import LBRYDeserializer, decode_claim_script, opcodes
+from server.daemon import LBCDaemon, SyscoinDaemon
 from server.session import (ElectrumX, BitcoinSegwitElectrumX, DashElectrumX,
-                            SmartCashElectrumX, AuxPoWElectrumX, SyscoinElectrumX)
+                            SmartCashElectrumX, AuxPoWElectrumX, SyscoinElectrumX, LBRYElectrumX)
 
 
 class Coin(CoinBase):
@@ -203,6 +208,9 @@ class Litecoin(Coin):
     NAME = "Litecoin"
     SHORTNAME = "LTC"
     NET = "mainnet"
+
+    # DAEMON = daemon.LegacyRPCDaemon
+
     XPUB_VERBYTES = bytes.fromhex("0488b21e")
     XPRV_VERBYTES = bytes.fromhex("0488ade4")
     P2PKH_VERBYTE = bytes.fromhex("30")
@@ -517,59 +525,6 @@ class Pivx(Coin):
             return quark_hash.getPoWHash(header)
 
 
-# class Pivx(Coin):
-#     NAME = "PIVX"
-#     SHORTNAME = "PIVX"
-#     NET = "mainnet"
-#     XPUB_VERBYTES = bytes.fromhex("022D2533")
-#     XPRV_VERBYTES = bytes.fromhex("0221312B")
-#     GENESIS_HASH = ('0000041e482b9b9691d98eefb48473405c0b8ec31b76df3797c74a78680ef818')
-#     P2PKH_VERBYTE = bytes.fromhex("1e")
-#     P2SH_VERBYTE = bytes.fromhex("0d")
-#     WIF_BYTE = bytes.fromhex("d4")
-#     TX_COUNT_HEIGHT = 569399
-#     TX_COUNT = 2157510
-#     TX_PER_BLOCK = 1
-#     STATIC_BLOCK_HEADERS = False
-#     RPC_PORT = 51470
-#     BASIC_HEADER_SIZE = 80
-#     ZEROCOIN_HEADER = 112
-#     ZEROCOIN_START_HEIGHT = 863787
-#     ZEROCOIN_V7_START_HEIGHT = 2153200
-#     ZEROCOIN_BLOCK_VERSION = 4
-#     ZEROCOIN_START_OFFSET = ZEROCOIN_START_HEIGHT * (BASIC_HEADER_SIZE - ZEROCOIN_HEADER)
-
-#     @classmethod
-#     def static_header_offset(cls, height):
-#         '''Given a header height return its offset in the headers file.
-
-#         If header sizes change at some point, this is the only code
-#         that needs updating.'''
-#         assert cls.STATIC_BLOCK_HEADERS
-#         if height >= cls.ZEROCOIN_START_HEIGHT:
-#             return cls.ZEROCOIN_START_OFFSET + height * cls.ZEROCOIN_HEADER
-#         else:
-#             return height * cls.BASIC_HEADER_SIZE
-
-#     @classmethod
-#     def static_header_len(cls, height):
-#         '''Given a header height return its length.'''
-#         if cls.ZEROCOIN_START_HEIGHT <= height < cls.ZEROCOIN_V7_START_HEIGHT:
-#             return cls.ZEROCOIN_HEADER
-#         else:
-#             return cls.BASIC_HEADER_SIZE
-
-#     @classmethod
-#     def header_hash(cls, header):
-#         '''Given a header return the hash.'''
-#         version, = struct.unpack('<I', header[:4])
-#         if version >= cls.ZEROCOIN_BLOCK_VERSION:
-#             return super().header_hash(header)
-#         else:
-#             import quark_hash
-#             return quark_hash.getPoWHash(header)
-
-
 class Trezarcoin(Coin):
     NAME = "Trezarcoin"
     SHORTNAME = "TZC"
@@ -648,3 +603,114 @@ class Stakenet(Coin):
         '''Given a header return the hash.'''
         import x11_hash
         return x11_hash.getPoWHash(header)
+
+
+class LBC(Coin):
+    DAEMON = LBCDaemon
+    SESSIONCLS = LBRYElectrumX
+    BLOCK_PROCESSOR = lib_tx.LBRYBlockProcessor
+    DESERIALIZER = LBRYDeserializer
+    NAME = "LBRY"
+    SHORTNAME = "LBC"
+    NET = "mainnet"
+    BASIC_HEADER_SIZE = 112
+    CHUNK_SIZE = 96
+    XPUB_VERBYTES = bytes.fromhex("019C354f")
+    XPRV_VERBYTES = bytes.fromhex("019C3118")
+    P2PKH_VERBYTE = bytes.fromhex("55")
+    P2SH_VERBYTES = bytes.fromhex("7A")
+    WIF_BYTE = bytes.fromhex("1C")
+    GENESIS_HASH = ('9c89283ba0f3227f6c03b70216b9f665'
+                    'f0118d5e0fa729cedf4fb34d6a34f463')
+    TX_COUNT = 2716936
+    TX_COUNT_HEIGHT = 329554
+    TX_PER_BLOCK = 1
+    RPC_PORT = 9245
+    REORG_LIMIT = 200
+    PEERS = [
+        'lbryum8.lbry.io t',
+        'lbryum9.lbry.io t',
+    ]
+
+    @classmethod
+    def genesis_block(cls, block):
+        '''Check the Genesis block is the right one for this coin.
+        Return the block less its unspendable coinbase.
+        '''
+        header = cls.block_header(block, 0)
+        header_hex_hash = hash_to_hex_str(cls.header_hash(header))
+        if header_hex_hash != cls.GENESIS_HASH:
+            raise CoinError('genesis block has hash {} expected {}'
+                            .format(header_hex_hash, cls.GENESIS_HASH))
+
+        return block
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        version, = struct.unpack('<I', header[:4])
+        timestamp, bits, nonce = struct.unpack('<III', header[100:112])
+        return {
+            'version': version,
+            'prev_block_hash': hash_to_hex_str(header[4:36]),
+            'merkle_root': hash_to_hex_str(header[36:68]),
+            'claim_trie_root': hash_to_hex_str(header[68:100]),
+            'timestamp': timestamp,
+            'bits': bits,
+            'nonce': nonce,
+            'block_height': height,
+            }
+
+    @util.cachedproperty
+    def address_handlers(cls):
+        return ScriptPubKey.PayToHandlers(
+            address=cls.P2PKH_address_from_hash160,
+            script_hash=cls.P2SH_address_from_hash160,
+            pubkey=cls.P2PKH_address_from_pubkey,
+            unspendable=lambda: None,
+            strange=cls.claim_address_handler,
+        )
+
+    @classmethod
+    def claim_address_handler(cls, script):
+        '''Parse a claim script, returns the address
+        '''
+        decoded = decode_claim_script(script)
+        if not decoded:
+            return None
+        ops = []
+        for op, data, _ in decoded[1]:
+            if not data:
+                ops.append(op)
+            else:
+                ops.append((op, data,))
+        match = _match_ops
+        TO_ADDRESS_OPS = [OpCodes.OP_DUP, OpCodes.OP_HASH160, -1,
+                          OpCodes.OP_EQUALVERIFY, OpCodes.OP_CHECKSIG]
+        TO_P2SH_OPS = [OpCodes.OP_HASH160, -1, OpCodes.OP_EQUAL]
+        TO_PUBKEY_OPS = [-1, OpCodes.OP_CHECKSIG]
+
+        if match(ops, TO_ADDRESS_OPS):
+            return cls.P2PKH_address_from_hash160(ops[2][-1])
+        if match(ops, TO_P2SH_OPS):
+            return cls.P2SH_address_from_hash160(ops[1][-1])
+        if match(ops, TO_PUBKEY_OPS):
+            return cls.P2PKH_address_from_pubkey(ops[0][-1])
+        if ops and ops[0] == OpCodes.OP_RETURN:
+            return None
+        return None
+
+    @classmethod
+    def hashX_from_script(cls, script):
+        '''
+        Overrides electrumx hashX from script by extracting addresses from claim scripts.
+        '''
+        if script and script[0] == OpCodes.OP_RETURN:
+            return None
+        if script[0] in [
+            opcodes.OP_CLAIM_NAME,
+            opcodes.OP_SUPPORT_CLAIM,
+            opcodes.OP_UPDATE_CLAIM
+        ]:
+            return cls.address_to_hashX(cls.claim_address_handler(script))
+        else:
+            return sha256(script).digest()[:HASHX_LEN]
