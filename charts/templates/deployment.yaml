@@ -1,0 +1,86 @@
+{{- $dot := . }}
+{{- range $i, $currency := .Values.currencies }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: "{{ include "utxoplugin.fullname" $dot }}-{{lower $currency }}"
+  namespace: {{ $dot.Values.namespace }}
+  labels:
+    app: {{ include "utxoplugin.fullname" $dot }}
+    currency: {{ $currency }}
+    {{- include "utxoplugin.labels" $dot | nindent 4 }}
+spec:
+  replicas: {{ $dot.Values.replicaCount }}
+  serviceName: "{{ include "utxoplugin.fullname" $ }}-{{lower $currency }}"
+  selector:
+    matchLabels:
+      currency: "{{ $currency }}"
+      {{- include "utxoplugin.selectorLabels" $dot | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        currency: {{ $currency }}
+        {{- include "utxoplugin.selectorLabels" $dot | nindent 8 }}
+    spec:
+    {{- with $dot.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      serviceAccountName: {{ include "utxoplugin.serviceAccountName" $dot }}
+      securityContext:
+        {{- toYaml $dot.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $dot.Chart.Name }}
+          securityContext:
+            {{- toYaml $dot.Values.securityContext | nindent 12 }}
+          image: "{{ $dot.Values.image.repository }}:latest"
+          imagePullPolicy: {{ $dot.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $dot.Values.service.port }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          env:
+          - name: NAMESPACE
+            value: {{ $dot.Values.namespace | quote }}
+          - name: PLUGIN_COIN
+            value: {{ $currency | quote }}
+          volumeMounts:
+            - mountPath: "/app/plugins/utxoplugin-{{ $currency }}"
+              name: "utxoplugin-{{lower $currency }}"
+          resources:
+            {{- toYaml $dot.Values.resources | nindent 12 }}
+      {{- with $dot.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: name
+                operator: In
+                values:
+                - "{{ include "utxoplugin.fullname" $dot }}-{{lower $currency }}"
+            topologyKey: "kubernetes.io/hostname"
+    {{- with $dot.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: "utxoplugin-{{lower $currency }}"
+      spec:
+        accessModes:
+          - {{ $dot.Values.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ $dot.Values.persistence.size }}
+        storageClassName: {{ $dot.Values.persistence.storageClass }}
+---
+{{- end }}

@@ -6,6 +6,7 @@ import logging
 import traceback
 from os import environ, getcwd, mkdir, remove
 from os.path import isdir, exists
+from kubernetes import client, config
 from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
 from kubernetes.config import ConfigException
@@ -14,7 +15,7 @@ from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
                                      Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet, LBC)
+                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -35,7 +36,6 @@ coin_map = {
     "PIVX": Pivx,
     "TZC": Trezarcoin,
     "XSN": Stakenet,
-    "LBRY": LBC,
 }
 
 coin = environ.get('PLUGIN_COIN')
@@ -50,7 +50,7 @@ environ['COST_HARD_LIMIT'] = '0'
 environ['INITIAL_CONCURRENT'] = '1000'
 environ['EVENT_LOOP_POLICY'] = 'uvloop'
 environ['PEER_ANNOUNCE'] = ''
-environ['SERVICES'] = 'tcp://:{},rpc://:{},ws://:50000'.format(int(port) + 1000, port)
+environ['SERVICES'] = 'tcp://:{},rpc://:{}'.format(int(port) + 1000, port)
 
 
 async def compact_history(env):
@@ -96,6 +96,7 @@ def delete_lock_files():
 
 
 def main(db_compacted=False):
+    namespace = environ.get('NAMESPACE')
     network = environ.get('NETWORK')
     skip_compacting = environ.get('SKIP_COMPACT', 'false')
     
@@ -103,15 +104,29 @@ def main(db_compacted=False):
 
     delete_lock_files()
 
-    coin_host_addr = environ.get('HOST_ADDRESS')
-    rpc_port = environ.get('HOST_RPC_PORT')
-    rpc_user = environ.get('RPC_USER')
-    rpc_pass = environ.get('RPC_PASSWORD')
+    try:
+        config.load_incluster_config()
+    except ConfigException:
+        config.load_kube_config()
+
+    v1 = client.CoreV1Api()
+
+    ret = v1.list_namespaced_service(namespace, label_selector="coindaemon={}".format(coin), watch=False)
+    print(ret)
+
+    coin_host_addr = None
+    rpc_port = None
+
+    for item in ret.items:
+        coin_host_addr = "{}.{}.svc.cluster.local".format(item.metadata.name, namespace)
+        for port in (item.spec.ports or []):
+            if port.name == 'rpc':
+                rpc_port = port.port
 
     if coin_host_addr is None or rpc_port is None:
         print("[utxoplugin] ERROR: Couldn't find coin host or rpc port!")
 
-    url = "http://{}:{}@{}:{}".format(rpc_user, rpc_pass, coin_host_addr, rpc_port)
+    url = "http://{}:{}@{}:{}".format("user", "pass", coin_host_addr, rpc_port)
 
     if coin in coin_map.keys():
         MappedCoin = coin_map[coin]

@@ -1,0 +1,37 @@
+replicaCount: 2
+
+image:
+  repository: 681930130680.dkr.ecr.us-east-1.amazonaws.com/cloudchainsapp/utxoplugin
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+namespace: "cc-backend"
+
+currencies: ["BLOCK", "BTC", "LTC", "DGB", "DASH", "DOGE", "POLIS", "XLQ", "PIVX", "BAY", "SYS", "RVN"]
+
+serviceAccount:
+  create: true
+  name:
+
+podSecurityContext: {}
+
+securityContext: {}
+
+persistence:
+  storageClass: gp2
+  size: 50Gi
+  accessMode: ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []

@@ -1,0 +1,21 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: "services-list-{{ include "utxoplugin.fullname" . }}"
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["list"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: "services-list-{{ include "utxoplugin.fullname" . }}"
+subjects:
+- kind: ServiceAccount
+  name: "{{ include "utxoplugin.fullname" . }}"
+  namespace: {{ .Values.namespace }}
+roleRef:
+  kind: ClusterRole
+  name: "services-list-{{ include "utxoplugin.fullname" . }}"
+  apiGroup: rbac.authorization.k8s.io

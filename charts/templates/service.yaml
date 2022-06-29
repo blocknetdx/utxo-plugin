@@ -1,0 +1,27 @@
+{{- $dot := . }}
+{{- range $i, $currency := .Values.currencies }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "utxoplugin.fullname" $ }}-{{lower $currency }}"
+  namespace: {{ $dot.Values.namespace }}
+  labels:
+    app: utxoplugin
+    currency: "{{ $currency }}"
+    {{- include "utxoplugin.labels" $ | nindent 4 }}
+spec:
+  type: {{ $dot.Values.service.type }}
+  ports:
+    - port: {{ $dot.Values.service.port }}
+      targetPort: {{ $dot.Values.service.targetPort }}
+      protocol: TCP
+      name: rpc
+    - port: 9000
+      targetPort: 9000
+      protocol: TCP
+      name: tcp
+  selector:
+    currency: "{{ $currency }}"
+    {{- include "utxoplugin.selectorLabels" $dot | nindent 4 }}
+---
+{{- end }}
