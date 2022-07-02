@@ -6,7 +6,7 @@ import logging
 import traceback
 from os import environ, getcwd, mkdir, remove
 from os.path import isdir, exists
-from kubernetes import client, config
+#from kubernetes import client, config
 from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
 from kubernetes.config import ConfigException
@@ -104,29 +104,35 @@ def main(db_compacted=False):
 
     delete_lock_files()
 
-    try:
-        config.load_incluster_config()
-    except ConfigException:
-        config.load_kube_config()
+#    try:
+#        config.load_incluster_config()
+#    except ConfigException:
+#        config.load_kube_config()
+#
+#    v1 = client.CoreV1Api()
+#
+#    ret = v1.list_namespaced_service(namespace, label_selector="coindaemon={}".format(coin), watch=False)
+#    print(ret)
+#
+#    coin_host_addr = None
+#    rpc_port = None
+#
+#    for item in ret.items:
+#        coin_host_addr = "{}.{}.svc.cluster.local".format(item.metadata.name, namespace)
+#        for port in (item.spec.ports or []):
+#            if port.name == 'rpc':
+#                rpc_port = port.port
+#
 
-    v1 = client.CoreV1Api()
-
-    ret = v1.list_namespaced_service(namespace, label_selector="coindaemon={}".format(coin), watch=False)
-    print(ret)
-
-    coin_host_addr = None
-    rpc_port = None
-
-    for item in ret.items:
-        coin_host_addr = "{}.{}.svc.cluster.local".format(item.metadata.name, namespace)
-        for port in (item.spec.ports or []):
-            if port.name == 'rpc':
-                rpc_port = port.port
+    coin_host_addr = environ.get('DAEMON_ADDR')
+    rpc_port = environ.get('DAEMON_RPC_PORT')
+    rpc_user = environ.get('RPC_USER')
+    rpc_password = environ.get('RPC_PASSWORD')
 
     if coin_host_addr is None or rpc_port is None:
         print("[utxoplugin] ERROR: Couldn't find coin host or rpc port!")
 
-    url = "http://{}:{}@{}:{}".format("user", "pass", coin_host_addr, rpc_port)
+    url = "http://{}:{}@{}:{}".format(rpc_user, rpc_password, coin_host_addr, rpc_port)
 
     if coin in coin_map.keys():
         MappedCoin = coin_map[coin]
