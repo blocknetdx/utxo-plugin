@@ -3,7 +3,7 @@
 ### Deployment Process
 Within the EXR ENV, one utxo-plugin container should be deployed for each utxo coin to be indexed.
 Example docker-compose.yml entry for utxo coin, BLOCK:
-```
+```yaml
   utxo-plugin-BLOCK:
     image: blocknetdx/utxo-plugin:latest
     restart: unless-stopped
@@ -33,4 +33,5 @@ Example docker-compose.yml entry for utxo coin, BLOCK:
         ipv4_address: 172.31.08.23
 ```
 DAEMON_ADDR is the IP addr of the container hosting the BLOCK daemon
+
 DAEMON_RPC_PORT is the RPC port of the BLOCK daemon
