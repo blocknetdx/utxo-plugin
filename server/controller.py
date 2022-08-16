@@ -11,8 +11,8 @@ from server.db import Database
 
 class Controller(ServerBase):
     async def serve(self, shutdown_event):
-        if not (0, 18, 1) <= aiorpcx_version < (0, 19):
-            raise RuntimeError('aiorpcX version 0.18.x is required')
+#        if not (0, 18, 1) <= aiorpcx_version < (0, 19):
+#            raise RuntimeError('aiorpcX version 0.18.x is required')
 
         env = self.env
         min_str, max_str = env.coin.SESSIONCLS.protocol_min_max_strings()
