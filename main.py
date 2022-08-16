@@ -8,7 +8,6 @@ from os import environ, getcwd, mkdir, remove
 from os.path import isdir, exists
 from electrumx import Env
 from electrumx.lib.util import CompactFormatter, make_logger
-from kubernetes.config import ConfigException
 from server.db import Database
 from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
@@ -103,8 +102,8 @@ def main(db_compacted=False):
 
     delete_lock_files()
 
-    coin_host_addr = environ.get('HOST_ADDRESS')
-    rpc_port = environ.get('HOST_RPC_PORT')
+    coin_host_addr = environ.get('DAEMON_ADDR')
+    rpc_port = environ.get('DAEMON_RPC_PORT')
     rpc_user = environ.get('RPC_USER')
     rpc_pass = environ.get('RPC_PASSWORD')
 
