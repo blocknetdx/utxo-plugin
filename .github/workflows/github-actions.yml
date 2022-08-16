@@ -3,7 +3,7 @@ on: [push]
 jobs:
 
   build:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Login to DockerHub
@@ -20,10 +20,10 @@ jobs:
     - name: push image
       run: docker push blocknetdx/utxo-plugin:${{steps.vars.outputs.tag}}
     - name: build an image
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/main'
       run: docker build . --file Dockerfile --tag blocknetdx/utxo-plugin:latest
     - name: push image
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/main'
       run: docker push blocknetdx/utxo-plugin:latest
     - name: Remove dangling images
       if: ${{ always() }}
