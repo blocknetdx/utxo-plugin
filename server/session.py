@@ -662,7 +662,10 @@ class ElectrumX(SessionBase):
         return self.session_mgr.bsub_results
 
     async def get_address_history(self, addresses):
-        addr_lookup = set(addresses)
+        if type(addresses) is str:
+            addr_lookup = {addresses}
+        else:
+            addr_lookup = set(addresses)
         spent = []
         spent_ids = set()
         processed_txs = set()  # track transactions that have already been processed
