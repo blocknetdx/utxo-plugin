@@ -34,7 +34,7 @@ coin_map = {
     "PIVX": Pivx,
     "TZC": Trezarcoin,
     "XSN": Stakenet,
-    "LBRY": LBC,
+    "LBC": LBC,
 }
 
 coin = environ.get('PLUGIN_COIN')
