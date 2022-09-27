@@ -20,7 +20,7 @@ Example docker-compose.yml entry for utxo coin, BLOCK:
     stop_signal: SIGINT
     stop_grace_period: 5m
     volumes:
-      - /snode/utxoplugin-db/BLOCK:/app/plugins/utxoplugin-BLOCK
+      - /snode/utxo_plugin/BLOCK:/app/plugins/utxoplugin-BLOCK
     logging:
       driver: "json-file"
       options:
