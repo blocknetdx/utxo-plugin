@@ -712,13 +712,18 @@ class ElectrumX(SessionBase):
 
                         # Record total sent coin if sent from one of our addresses
                         if len(addrs) > 0:
+                            is_my_address = False
                             for addr in addrs:
                                 if addr in addr_lookup:
                                     my_total_send_amount += prev_out_amount
+                                    is_my_address = True
                                     break
 
-                            total_send_amount += prev_out_amount
+                            if not is_my_address:
+                                total_send_amount += prev_out_amount
+
                             from_addresses.update(addrs)
+
 
                     my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
                     is_sending_coin = my_total_send_amount > 0
