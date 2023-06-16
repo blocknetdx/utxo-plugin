@@ -764,7 +764,7 @@ class ElectrumX(SessionBase):
                             return None, None
 
                     def get_address(p_item):
-                        if 'addresses' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
+                        if 'addresses' not in p_item['scriptPubKey'] or 'address' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
                                 or p_item['scriptPubKey']['type'] == 'nonstandard':
                             return None  # skip incompatible vout
                         if isinstance(p_item['scriptPubKey']['address'], str):
