@@ -701,24 +701,24 @@ class ElectrumX(SessionBase):
                         if not prev_tx:
                             continue
 
-                    prev_out_amount = prev_tx['vout'][item['vout']]['value']
-                    script_pub_key = prev_tx['vout'][item['vout']]['scriptPubKey']
-                    addrs = []
+                        prev_out_amount = prev_tx['vout'][item['vout']]['value']
+                        script_pub_key = prev_tx['vout'][item['vout']]['scriptPubKey']
+                        addrs = []
 
-                    if 'addresses' in script_pub_key:
-                        addrs = script_pub_key['addresses']
-                    elif 'address' in script_pub_key:
-                        addrs = [script_pub_key['address']]
+                        if 'addresses' in script_pub_key:
+                            addrs = script_pub_key['addresses']
+                        elif 'address' in script_pub_key:
+                            addrs = [script_pub_key['address']]
 
-                    # Record total sent coin if sent from one of our addresses
-                    if len(addrs) > 0:
-                        for addr in addrs:
-                            if addr in addr_lookup:
-                                my_total_send_amount += prev_out_amount
-                                break
+                        # Record total sent coin if sent from one of our addresses
+                        if len(addrs) > 0:
+                            for addr in addrs:
+                                if addr in addr_lookup:
+                                    my_total_send_amount += prev_out_amount
+                                    break
 
-                        total_send_amount += prev_out_amount
-                        from_addresses.update(addrs)
+                            total_send_amount += prev_out_amount
+                            from_addresses.update(addrs)
 
                     my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
                     is_sending_coin = my_total_send_amount > 0
