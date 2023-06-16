@@ -775,7 +775,7 @@ class ElectrumX(SessionBase):
                             if isinstance(p_item['scriptPubKey']['address'], str):
                                 return p_item['scriptPubKey']['address']
 
-                        if 'addresses' in p_item['scriptPubKey']:
+                        elif 'addresses' in p_item['scriptPubKey']:
                             if isinstance(p_item['scriptPubKey']['addresses'], str):
                                 return p_item['scriptPubKey']['addresses']
 
