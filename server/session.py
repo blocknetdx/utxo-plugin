@@ -671,13 +671,13 @@ class ElectrumX(SessionBase):
         processed_txs = set()  # track transactions that have already been processed
         for address in addr_lookup:
             address = str(address)
-            self.logger.debug(f'Processing address: {address}')
+            #self.logger.debug(f'Processing address: {address}')
 
             try:
                 hash_x = self.session_mgr._history_address_cache[address]
-                self.logger.debug(f'Address found in cache: {hash_x}')
+                #self.logger.debug(f'Address found in cache: {hash_x}')
             except KeyError:
-                self.logger.debug(f'Address not found in cache, converting address to hashX')
+                #self.logger.debug(f'Address not found in cache, converting address to hashX')
                 try:
                     hash_x = self.coin.address_to_hashX(address)
                     self.session_mgr._history_address_cache[address] = hash_x
@@ -688,16 +688,16 @@ class ElectrumX(SessionBase):
 
             try:
                 history = await self.db.limited_history(hash_x, limit=100)
-                self.logger.debug(f'History retrieved for address: {address}')
+                #self.logger.debug(f'History retrieved for address: {address}')
 
                 for tx_hash, height in history:
                     if tx_hash in processed_txs:
-                        self.logger.debug(f'Skipping transaction, already processed: {tx_hash}')
+                        #self.logger.debug(f'Skipping transaction, already processed: {tx_hash}')
                         continue  # skip, already processed
-                    self.logger.debug(f'Processing transaction: {tx_hash}')
+                    #self.logger.debug(f'Processing transaction: {tx_hash}')
                     tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
                     if not tx:
-                        self.logger.debug(f'Transaction not found: {tx_hash}')
+                        #self.logger.debug(f'Transaction not found: {tx_hash}')
                         continue
                     processed_txs.add(tx_hash)
 
@@ -764,11 +764,11 @@ class ElectrumX(SessionBase):
                             return None, None
                         
                     def get_address(p_item):
-                        self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
-                        self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey'].get('address')} {type(p_item['scriptPubKey'].get('address'))}")
+                        #self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
+                        #self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey'].get('address')} {type(p_item['scriptPubKey'].get('address'))}")
 
                         if 'type' not in p_item['scriptPubKey'] or p_item['scriptPubKey']['type'] == 'nonstandard':
-                            self.logger.debug("Incompatible vout address, skipping")
+                            #self.logger.debug("Incompatible vout address, skipping")
                             return None  # skip incompatible vout
 
                         if 'address' in p_item['scriptPubKey']:
@@ -782,7 +782,7 @@ class ElectrumX(SessionBase):
                             elif isinstance(p_item['scriptPubKey']['addresses'], list) and len(p_item['scriptPubKey']['addresses']) > 0:
                                 return p_item['scriptPubKey']['addresses'][0]
 
-                        self.logger.debug("No valid address found")
+                        #self.logger.debug("No valid address found")
                         return None
 
 
@@ -795,11 +795,11 @@ class ElectrumX(SessionBase):
                         fees += amount
                         vout_address = get_address(item)
                         if not vout_address:
-                            self.logger.debug('Incompatible vout address, skipping')
+                            #self.logger.debug('Incompatible vout address, skipping')
                             continue  # incompatible address, skip
 
                         if vout_address in addr_lookup:
-                            self.logger.debug('Address is not ours, skipping')
+                            #self.logger.debug('Address is not ours, skipping')
                             continue  # not our address, skip
 
                         # Amount is negative for send and positive for receive
@@ -819,16 +819,16 @@ class ElectrumX(SessionBase):
                             if spend:
                                 spent_ids.add(txid_n)
                                 spends.append(spend)
-                                self.logger.debug(f'Spent coin recorded: {spend}')
+                                #self.logger.debug(f'Spent coin recorded: {spend}')
 
                     # Second pass: Only process transactions for all our own addresses
                     for item in tx['vout']:
                         vout_address = get_address(item)
                         if not vout_address:
-                            self.logger.debug('Incompatible vout address, skipping')
+                            #self.logger.debug('Incompatible vout address, skipping')
                             continue  # incompatible address, skip
                         if vout_address not in addr_lookup:
-                            self.logger.debug('Address already processed in a previous pass, skipping')
+                            #self.logger.debug('Address already processed in a previous pass, skipping')
                             continue  # skip, already processed in block above
 
                         amount = item['value']
@@ -843,7 +843,7 @@ class ElectrumX(SessionBase):
                         if spend:
                             spent_ids.add(txid_n)
                             spends.append(spend)
-                            self.logger.debug(f'Received coin recorded: {spend}')
+                            #self.logger.debug(f'Received coin recorded: {spend}')
 
                         # Amount is negative for send and positive for receive
                         # Record sent coin to address if we have outstanding send amount.
@@ -860,7 +860,7 @@ class ElectrumX(SessionBase):
                                 if spend:
                                     spent_ids.add(txid_n)
                                     spends.append(spend)
-                                    self.logger.debug(f'Spent coin recorded: {spend}')
+                                    #self.logger.debug(f'Spent coin recorded: {spend}')
 
                                     if biggest_sent_amount_my_address < amount:
                                         biggest_sent_amount_my_address = amount
@@ -875,7 +875,7 @@ class ElectrumX(SessionBase):
                                 if biggest_sent_amount_not_my_address > 0 else biggest_sent_address_my_address
                             if spend['address'] == biggest_sent_address and spend['category'] == 'send':
                                 spend['fee'] = truncate(fees, 10)
-                                self.logger.debug(f'Assigned fee: {spend}')
+                                #self.logger.debug(f'Assigned fee: {spend}')
                                 break
 
                     # Consolidate spends to self
@@ -916,7 +916,7 @@ class ElectrumX(SessionBase):
                             spend['time'] = blocktime
 
                     spent.extend(spends)
-                    self.logger.debug(f'Spends recorded for transaction: {spends}')
+                    #self.logger.debug(f'Spends recorded for transaction: {spends}')
 
             except Exception:
                 self.logger.exception('[GetAddressHistory] Exception while retrieving history')
