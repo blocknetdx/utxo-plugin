@@ -764,6 +764,7 @@ class ElectrumX(SessionBase):
                             return None, None
                         
                     def get_address(p_item):
+                        self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
                         self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey']['address']} {type(p_item['scriptPubKey']['address'])}")
 
                         if 'addresses' not in p_item['scriptPubKey'] or 'address' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
