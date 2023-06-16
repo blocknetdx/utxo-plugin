@@ -765,25 +765,26 @@ class ElectrumX(SessionBase):
                         
                     def get_address(p_item):
                         self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
-                        self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey']['address']} {type(p_item['scriptPubKey']['address'])}")
+                        self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey'].get('address')} {type(p_item['scriptPubKey'].get('address'))}")
 
-                        if 'addresses' not in p_item['scriptPubKey'] or 'address' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
-                                or p_item['scriptPubKey']['type'] == 'nonstandard':
+                        if 'type' not in p_item['scriptPubKey'] or p_item['scriptPubKey']['type'] == 'nonstandard':
                             self.logger.debug("Incompatible vout address, skipping")
                             return None  # skip incompatible vout
 
-                        if isinstance(p_item['scriptPubKey']['address'], str):
-                            return p_item['scriptPubKey']['address']
+                        if 'address' in p_item['scriptPubKey']:
+                            if isinstance(p_item['scriptPubKey']['address'], str):
+                                return p_item['scriptPubKey']['address']
 
-                        if isinstance(p_item['scriptPubKey']['addresses'], str):
-                            return p_item['scriptPubKey']['addresses']
+                        if 'addresses' in p_item['scriptPubKey']:
+                            if isinstance(p_item['scriptPubKey']['addresses'], str):
+                                return p_item['scriptPubKey']['addresses']
 
-                        elif isinstance(p_item['scriptPubKey']['addresses'], list):
-                            return p_item['scriptPubKey']['addresses'][0]
+                            elif isinstance(p_item['scriptPubKey']['addresses'], list) and len(p_item['scriptPubKey']['addresses']) > 0:
+                                return p_item['scriptPubKey']['addresses'][0]
 
-                        else:
-                            self.logger.debug("No valid address found")
-                            return None
+                        self.logger.debug("No valid address found")
+                        return None
+
 
 
 
