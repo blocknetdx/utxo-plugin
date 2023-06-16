@@ -758,6 +758,8 @@ class ElectrumX(SessionBase):
                         if 'addresses' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
                                 or p_item['scriptPubKey']['type'] == 'nonstandard':
                             return None  # skip incompatible vout
+                        if isinstance(p_item['scriptPubKey']['address'], str):
+                            return p_item['scriptPubKey']['address']
                         if isinstance(p_item['scriptPubKey']['addresses'], str):
                             return p_item['scriptPubKey']['addresses']
                         elif isinstance(p_item['scriptPubKey']['addresses'], list):
