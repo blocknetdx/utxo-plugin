@@ -681,7 +681,7 @@ class ElectrumX(SessionBase):
                 try:
                     hash_x = self.coin.address_to_hashX(address)
                     self.session_mgr._history_address_cache[address] = hash_x
-                    self.logger.debug(f'Address converted to hashX: {hash_x}')
+                    #self.logger.debug(f'Address converted to hashX: {hash_x}')
                 except Exception:
                     self.logger.exception('[GetAddressHistory] Exception while converting address')
                     continue
@@ -708,7 +708,7 @@ class ElectrumX(SessionBase):
                     for item in tx['vin']:
                         prev_tx = await self.transaction_get(item['txid'], verbose=True)
                         if not prev_tx:
-                            self.logger.debug(f'Previous transaction not found: {item["txid"]}')
+                            #self.logger.debug(f'Previous transaction not found: {item["txid"]}')
                             continue
 
                         prev_out_amount = prev_tx['vout'][item['vout']]['value']
