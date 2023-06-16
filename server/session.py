@@ -671,24 +671,33 @@ class ElectrumX(SessionBase):
         processed_txs = set()  # track transactions that have already been processed
         for address in addr_lookup:
             address = str(address)
+            #self.logger.debug(f'Processing address: {address}')
 
             try:
                 hash_x = self.session_mgr._history_address_cache[address]
+                #self.logger.debug(f'Address found in cache: {hash_x}')
             except KeyError:
-                hash_x = self.coin.address_to_hashX(address)
-                self.session_mgr._history_address_cache[address] = hash_x
-            except Exception:
-                self.logger.exception('[GetAddressHistory] Exception while converting address')
-                continue
+                #self.logger.debug(f'Address not found in cache, converting address to hashX')
+                try:
+                    hash_x = self.coin.address_to_hashX(address)
+                    self.session_mgr._history_address_cache[address] = hash_x
+                    #self.logger.debug(f'Address converted to hashX: {hash_x}')
+                except Exception:
+                    self.logger.exception('[GetAddressHistory] Exception while converting address')
+                    continue
 
             try:
                 history = await self.db.limited_history(hash_x, limit=100)
+                #self.logger.debug(f'History retrieved for address: {address}')
 
                 for tx_hash, height in history:
                     if tx_hash in processed_txs:
+                        #self.logger.debug(f'Skipping transaction, already processed: {tx_hash}')
                         continue  # skip, already processed
+                    #self.logger.debug(f'Processing transaction: {tx_hash}')
                     tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
                     if not tx:
+                        #self.logger.debug(f'Transaction not found: {tx_hash}')
                         continue
                     processed_txs.add(tx_hash)
 
@@ -699,19 +708,31 @@ class ElectrumX(SessionBase):
                     for item in tx['vin']:
                         prev_tx = await self.transaction_get(item['txid'], verbose=True)
                         if not prev_tx:
+                            #self.logger.debug(f'Previous transaction not found: {item["txid"]}')
                             continue
 
                         prev_out_amount = prev_tx['vout'][item['vout']]['value']
-                        addrs = prev_tx['vout'][item['vout']]['scriptPubKey']['addresses']
-                        # record total sent coin if sent from one of our addresses
+                        script_pub_key = prev_tx['vout'][item['vout']]['scriptPubKey']
+                        addrs = []
+
+                        if 'addresses' in script_pub_key:
+                            addrs = script_pub_key['addresses']
+                        elif 'address' in script_pub_key:
+                            addrs = [script_pub_key['address']]
+
+                        # Record total sent coin if sent from one of our addresses
                         if len(addrs) > 0:
+                            is_my_address = False
                             for addr in addrs:
                                 if addr in addr_lookup:
                                     my_total_send_amount += prev_out_amount
+                                    is_my_address = True
                                     break
 
-                        total_send_amount += prev_out_amount
-                        from_addresses.update(addrs)
+                            if not is_my_address:
+                                total_send_amount += prev_out_amount
+
+                            from_addresses.update(addrs)
 
                     my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
                     is_sending_coin = my_total_send_amount > 0
@@ -741,17 +762,31 @@ class ElectrumX(SessionBase):
                             }, p_txid_n
                         else:
                             return None, None
-
+                        
                     def get_address(p_item):
-                        if 'addresses' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
-                                or p_item['scriptPubKey']['type'] == 'nonstandard':
+                        #self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
+                        #self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey'].get('address')} {type(p_item['scriptPubKey'].get('address'))}")
+
+                        if 'type' not in p_item['scriptPubKey'] or p_item['scriptPubKey']['type'] == 'nonstandard':
+                            #self.logger.debug("Incompatible vout address, skipping")
                             return None  # skip incompatible vout
-                        if isinstance(p_item['scriptPubKey']['addresses'], str):
-                            return p_item['scriptPubKey']['addresses']
-                        elif isinstance(p_item['scriptPubKey']['addresses'], list):
-                            return p_item['scriptPubKey']['addresses'][0]
-                        else:
-                            return None
+
+                        if 'address' in p_item['scriptPubKey']:
+                            if isinstance(p_item['scriptPubKey']['address'], str):
+                                return p_item['scriptPubKey']['address']
+
+                        elif 'addresses' in p_item['scriptPubKey']:
+                            if isinstance(p_item['scriptPubKey']['addresses'], str):
+                                return p_item['scriptPubKey']['addresses']
+
+                            elif isinstance(p_item['scriptPubKey']['addresses'], list) and len(p_item['scriptPubKey']['addresses']) > 0:
+                                return p_item['scriptPubKey']['addresses'][0]
+
+                        #self.logger.debug("No valid address found")
+                        return None
+
+
+
 
                     # First pass: Only process transactions sent to another address, record fees
                     for item in tx['vout']:
@@ -760,9 +795,11 @@ class ElectrumX(SessionBase):
                         fees += amount
                         vout_address = get_address(item)
                         if not vout_address:
+                            #self.logger.debug('Incompatible vout address, skipping')
                             continue  # incompatible address, skip
 
                         if vout_address in addr_lookup:
+                            #self.logger.debug('Address is not ours, skipping')
                             continue  # not our address, skip
 
                         # Amount is negative for send and positive for receive
@@ -782,13 +819,16 @@ class ElectrumX(SessionBase):
                             if spend:
                                 spent_ids.add(txid_n)
                                 spends.append(spend)
+                                #self.logger.debug(f'Spent coin recorded: {spend}')
 
                     # Second pass: Only process transactions for all our own addresses
                     for item in tx['vout']:
                         vout_address = get_address(item)
                         if not vout_address:
+                            #self.logger.debug('Incompatible vout address, skipping')
                             continue  # incompatible address, skip
                         if vout_address not in addr_lookup:
+                            #self.logger.debug('Address already processed in a previous pass, skipping')
                             continue  # skip, already processed in block above
 
                         amount = item['value']
@@ -803,6 +843,7 @@ class ElectrumX(SessionBase):
                         if spend:
                             spent_ids.add(txid_n)
                             spends.append(spend)
+                            #self.logger.debug(f'Received coin recorded: {spend}')
 
                         # Amount is negative for send and positive for receive
                         # Record sent coin to address if we have outstanding send amount.
@@ -819,6 +860,7 @@ class ElectrumX(SessionBase):
                                 if spend:
                                     spent_ids.add(txid_n)
                                     spends.append(spend)
+                                    #self.logger.debug(f'Spent coin recorded: {spend}')
 
                                     if biggest_sent_amount_my_address < amount:
                                         biggest_sent_amount_my_address = amount
@@ -833,6 +875,7 @@ class ElectrumX(SessionBase):
                                 if biggest_sent_amount_not_my_address > 0 else biggest_sent_address_my_address
                             if spend['address'] == biggest_sent_address and spend['category'] == 'send':
                                 spend['fee'] = truncate(fees, 10)
+                                #self.logger.debug(f'Assigned fee: {spend}')
                                 break
 
                     # Consolidate spends to self
@@ -860,14 +903,26 @@ class ElectrumX(SessionBase):
                                 break
                     # Remove all the consolidated spends
                     if len(remove_these) > 0:
-                        spends[:] = [spend for spend in spends if spend not in remove_these]
+                        for spend in remove_these:
+                            spends.remove(spend)
 
-                    spent += spends
+                    # Filter out spends that have zero amount after consolidation
+                    spends = list(filter(lambda sp: abs(sp['amount']) > sys.float_info.epsilon, spends))
+
+                    # Add timestamp to spends
+                    blocktime = tx.get('blocktime')
+                    if blocktime:
+                        for spend in spends:
+                            spend['time'] = blocktime
+
+                    spent.extend(spends)
+                    #self.logger.debug(f'Spends recorded for transaction: {spends}')
+
             except Exception:
-                self.logger.exception('[GetAddressHistory] Exception while obtaining history')
+                self.logger.exception('[GetAddressHistory] Exception while retrieving history')
 
-        # self.logger.info(f'SPENT: {spent}')
         return spent
+
 
     async def get_history(self, addresses):
         self.logger.info('get_history: {}'.format(addresses))
