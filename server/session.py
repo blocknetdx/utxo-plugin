@@ -767,6 +767,10 @@ class ElectrumX(SessionBase):
                         if 'addresses' not in p_item['scriptPubKey'] or 'address' not in p_item['scriptPubKey'] or 'type' not in p_item['scriptPubKey'] \
                                 or p_item['scriptPubKey']['type'] == 'nonstandard':
                             return None  # skip incompatible vout
+                        if 'addresses' in p_item['scriptPubKey']:
+                            self.logger.debug(f"scriptPubKey: {p_item['scriptPubKey']['addresses']} {type(p_item['scriptPubKey']['addresses'])}")
+                        if 'address' in p_item['scriptPubKey']:
+                            self.logger.debug(f"scriptPubKey: {p_item['scriptPubKey']['address']} {type(p_item['scriptPubKey']['address'])}")
                         if isinstance(p_item['scriptPubKey']['address'], str):
                             return p_item['scriptPubKey']['address']
                         if isinstance(p_item['scriptPubKey']['addresses'], str):
@@ -775,6 +779,7 @@ class ElectrumX(SessionBase):
                             return p_item['scriptPubKey']['addresses'][0]
                         else:
                             return None
+
 
                     # First pass: Only process transactions sent to another address, record fees
                     for item in tx['vout']:
