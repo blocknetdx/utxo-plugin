@@ -904,7 +904,8 @@ class ElectrumX(SessionBase):
                     # Remove all the consolidated spends
                     if len(remove_these) > 0:
                         for spend in remove_these:
-                            spends.remove(spend)
+                            if spend in spends:
+                                spends.remove(spend)
 
                     # Filter out spends that have zero amount after consolidation
                     spends = list(filter(lambda sp: abs(sp['amount']) > sys.float_info.epsilon, spends))
