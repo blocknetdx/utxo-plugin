@@ -1,8 +1,10 @@
 import struct
+import electrumx.lib.tx as lib_tx
+import electrumx.lib.tx_dash as lib_tx_dash
+#import lib.tx as lib_tx
+#import lib.tx_dash as lib_tx_dash
+#import lib.coins as BlockProc
 
-import lib.tx as lib_tx
-import lib.tx_dash as lib_tx_dash
-import lib.coins as BlockProc
 import electrumx.lib.util as util
 import electrumx.server.daemon as daemon
 import electrumx.server.block_processor as block_proc
@@ -16,12 +18,11 @@ from lib.tx_lbc import LBRYDeserializer, decode_claim_script, opcodes
 from server.daemon import LBCDaemon, SyscoinDaemon
 from server.session import (ElectrumX, BitcoinSegwitElectrumX, DashElectrumX,
                             SmartCashElectrumX, AuxPoWElectrumX, SyscoinElectrumX, LBRYElectrumX)
-
-
+from lib.tx import LBRYBlockProcessor
 class Coin(CoinBase):
     DESERIALIZER = lib_tx.Deserializer
     DAEMON = daemon.Daemon
-    BLOCK_PROCESSOR = BlockProc.BlockProcessor
+    BLOCK_PROCESSOR = block_proc.BlockProcessor
     SESSIONCLS = ElectrumX
     REORG_LIMIT = 2000
 
@@ -214,11 +215,11 @@ class Litecoin(Coin):
     XPUB_VERBYTES = bytes.fromhex("0488b21e")
     XPRV_VERBYTES = bytes.fromhex("0488ade4")
     P2PKH_VERBYTE = bytes.fromhex("30")
-    P2SH_VERBYTES = [bytes.fromhex("32"), bytes.fromhex("05")]
+    P2SH_VERBYTES = (bytes.fromhex("32"), bytes.fromhex("05"))
     WIF_BYTE = bytes.fromhex("b0")
     GENESIS_HASH = ('12a765e31ffd4059bada1e25190f6e98'
                     'c99d9714d334efa41a195a7e7e04bfe2')
-    DESERIALIZER = lib_tx.DeserializerSegWit
+    DESERIALIZER = lib_tx.DeserializerLitecoin
     TX_COUNT = 8908766
     TX_COUNT_HEIGHT = 1105256
     TX_PER_BLOCK = 10
@@ -608,7 +609,7 @@ class Stakenet(Coin):
 class LBC(Coin):
     DAEMON = LBCDaemon
     SESSIONCLS = LBRYElectrumX
-    BLOCK_PROCESSOR = lib_tx.LBRYBlockProcessor
+    BLOCK_PROCESSOR = LBRYBlockProcessor
     DESERIALIZER = LBRYDeserializer
     NAME = "LBRY"
     SHORTNAME = "LBC"
