@@ -715,3 +715,21 @@ class LBC(Coin):
             return cls.address_to_hashX(cls.claim_address_handler(script))
         else:
             return sha256(script).digest()[:HASHX_LEN]
+
+
+class Unobtanium(AuxPowMixin, Coin):
+    NAME = "Unobtanium"
+    SHORTNAME = "UNO"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
+    P2PKH_VERBYTE = bytes.fromhex("82")
+    P2SH_VERBYTES = (bytes.fromhex("1e"),)
+    WIF_BYTE = bytes.fromhex("e0")
+    GENESIS_HASH = ('000004c2fc5fffb810dccc197d603690'
+                    '099a68305232e552d96ccbe8e2c52b75')
+    TX_COUNT = 1
+    TX_COUNT_HEIGHT = 1
+    TX_PER_BLOCK = 1
+    RPC_PORT = 65535
+    REORG_LIMIT = 5000
