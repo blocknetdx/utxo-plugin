@@ -717,7 +717,7 @@ class LBC(Coin):
             return sha256(script).digest()[:HASHX_LEN]
 
 
-class Unobtanium(AuxPowMixin, Coin):
+class Unobtanium(AuxPowHelper, Coin):
     NAME = "Unobtanium"
     SHORTNAME = "UNO"
     NET = "mainnet"
