@@ -1,5 +1,6 @@
 git+https://github.com/spesmilo/electrumx.git@master#egg=e-x
 x11_hash==1.4
+dash_hash==1.4
 quark_hash==1.0
 x16r-hash==1.0.1
 x16rv2-hash==1.0
