@@ -260,6 +260,7 @@ class Dogecoin(AuxPowHelper, Coin):
     DESERIALIZER = lib_tx.DeserializerAuxPowSegWit
 
 
+# Source: https://github.com/dashpay/dash
 class Dash(Coin):
     NAME = "Dash"
     SHORTNAME = "DASH"
@@ -269,7 +270,7 @@ class Dash(Coin):
     GENESIS_HASH = ('00000ffd590b1485b3caadc19b22e637'
                     '9c733355108f107a430458cdf3407ab6')
     P2PKH_VERBYTE = bytes.fromhex("4c")
-    P2SH_VERBYTES = [bytes.fromhex("10")]
+    P2SH_VERBYTES = (bytes.fromhex("10"),)
     WIF_BYTE = bytes.fromhex("cc")
     TX_COUNT_HEIGHT = 569399
     TX_COUNT = 2157510
@@ -283,8 +284,8 @@ class Dash(Coin):
     @classmethod
     def header_hash(cls, header):
         '''Given a header return the hash.'''
-        import x11_hash
-        return x11_hash.getPoWHash(header)
+        import dash_hash
+        return dash_hash.getPoWHash(header)
 
 
 class Polis(Coin):
