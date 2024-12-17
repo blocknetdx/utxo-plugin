@@ -10,8 +10,8 @@ uvloop==0.17.0
 python-rapidjson==1.10
 kawpow==0.9.4.4
 msgpack~=1.0.2
-aiorpcX~=0.22.1
 asyncio~=3.4.3
 lbryschema==0.0.16
 beaker==1.12.1
 pylru~=1.2.0
+scrypt~=0.8.27
