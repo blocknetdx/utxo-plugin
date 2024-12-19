@@ -748,7 +748,7 @@ class ElectrumX(SessionBase):
                 non_owned_output_amount += amount
 
         # Calculate fees
-        fees = total_input_amount - total_output_amount
+        fees = truncate(total_input_amount - total_output_amount, 10)
 
         # Categorize the transaction
         if owned_input_amount > 0 and non_owned_output_amount > 0:
