@@ -757,10 +757,9 @@ class ElectrumX(SessionBase):
             for item in tx['vout']:
                 vout_addresses = self._extract_addresses(item['scriptPubKey'])
                 if not (vout_addresses & addr_lookup):
-                    spend, txid_n = self._create_spend(
-                        spent_ids, vout_addresses, -float(item['value']),
-                        transaction_type, item, tx, list(from_addresses)
-                    )
+                    amount = float(item['value']) + fees
+                    spend, txid_n = self._create_spend(spent_ids, vout_addresses, -amount, transaction_type, item, tx,
+                                                       list(from_addresses))
                     if spend:
                         self._assign_transaction_fees([spend], fees, is_sending_coin=True)
                         spends.append(spend)
