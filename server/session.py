@@ -757,14 +757,13 @@ class ElectrumX(SessionBase):
             for item in tx['vout']:
                 vout_addresses = self._extract_addresses(item['scriptPubKey'])
                 if not (vout_addresses & addr_lookup):
-                    spend, txid_n = self._create_spend(spent_ids, vout_addresses, -float(item['value']), transaction_type, item, tx,
-                                                       list(from_addresses))
+                    spend = self._create_spend(spent_ids, vout_addresses, -float(item['value']),
+                                               transaction_type, item, tx,
+                                               list(from_addresses))
                     if spend:
-                        self._assign_transaction_fees([spend], fees, is_sending_coin=True)
                         spends.append(spend)
             spends = self._consolidate_spends(spends)
-            # add fee to the amount exiting wallet
-            spends[0]['amount']-=fees
+            spends = self._assign_transaction_fees(spends, fees)
 
         elif owned_input_amount == 0 and owned_output_amount > 0:
             # Receive transaction: no owned inputs, outputs to owned addresses
@@ -772,31 +771,31 @@ class ElectrumX(SessionBase):
             for item in tx['vout']:
                 vout_addresses = self._extract_addresses(item['scriptPubKey'])
                 if vout_addresses & addr_lookup:
-                    spend, txid_n = self._create_spend(
+                    spend = self._create_spend(
                         spent_ids, vout_addresses, float(item['value']),
                         transaction_type, item, tx, list(from_addresses)
                     )
                     if spend:
-                        spend['fee'] = fees
                         spends.append(spend)
             spends = self._consolidate_spends(spends)
+            spends = self._assign_transaction_fees(spends, fees)
 
         elif owned_input_amount > 0 and owned_output_amount > 0 and non_owned_input_amount == 0 and non_owned_output_amount == 0:
             # # Internal transaction: all inputs and outputs are owned addresses
             temp_item = tx['vout'][0]  # to fix later, picking first vout as placeholder, data not used anymore ...
-            internal_receive_spend, txid_n = self._create_spend(
+            internal_spend = self._create_spend(
                 spent_ids,
                 self._extract_addresses(temp_item['scriptPubKey']),
-                -float(fees),
+                0,
                 'internal',
                 temp_item,  # Pass the actual output item
                 tx,
                 list(from_addresses)
             )
-            if internal_receive_spend:
-                internal_receive_spend['fee'] = fees
-                spends.append(internal_receive_spend)
+            if internal_spend:
+                spends.append(internal_spend)
             spends = self._consolidate_spends(spends)
+            spends = self._assign_transaction_fees(spends, fees)
 
         return spends
 
@@ -818,7 +817,7 @@ class ElectrumX(SessionBase):
         return {
             'address': next(iter(addresses)),  # Use the first address for simplicity
             'amount': float(amount),
-            'fee': 0.0,
+            'fee': 0.0,  # this value is set later with a helper
             'vout': item['n'],
             'category': category,
             'confirmations': tx['confirmations'],
@@ -827,15 +826,13 @@ class ElectrumX(SessionBase):
             'time': tx['blocktime'],
             'txid': tx['txid'],
             'from_addresses': from_addresses,
-        }, txid_n
+        }
 
-    def _assign_transaction_fees(self, spends, fees, is_sending_coin):
+    def _assign_transaction_fees(self, spends, fees):
         """Assign fees to the largest 'send' transaction."""
-        if is_sending_coin and fees < 0:
-            for spend in spends:
-                if spend['category'] == 'send':
-                    spend['fee'] = truncate(fees, 10)  # Assign fees here
-                    break
+        for spend in spends:
+            spend['fee'] = truncate(fees, 10)  # Assign fees here
+        return spends
 
     def _consolidate_spends(self, spends):
         """Consolidate multiple send/receive from/to same address into one element."""
@@ -846,8 +843,6 @@ class ElectrumX(SessionBase):
                 consolidated[key] = spend
             else:
                 consolidated[key]['amount'] += spend['amount']
-                consolidated[key]['fee'] += spend['fee']
-
         return list(consolidated.values())
 
     async def get_history(self, addresses):
