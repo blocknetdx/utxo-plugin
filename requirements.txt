@@ -13,5 +13,4 @@ msgpack~=1.0.2
 asyncio~=3.4.3
 lbryschema==0.0.16
 beaker==1.12.1
-pylru~=1.2.0
 scrypt~=0.8.27
