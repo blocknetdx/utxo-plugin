@@ -1,8 +1,8 @@
+import asyncio
 import codecs
 import datetime
 import sys
 import time
-import pylru
 import electrumx
 import electrumx.lib.util as util
 from binascii import unhexlify, hexlify
@@ -12,6 +12,7 @@ from aiorpcx import ReplyAndDisconnect, RPCError
 from electrumx.lib.hash import sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.server.daemon import DaemonError
 from electrumx.server.session import SessionBase, assert_tx_hash, scripthash_to_hashX, non_negative_integer
+from electrumx.lib.lrucache import LRUCache
 from lbryschema.uri import parse_lbry_uri
 from lbryschema.error import URIParseError
 
@@ -41,7 +42,7 @@ class ElectrumX(SessionBase):
         self.cost = 5.0  # Connection cost
         self.cached_gettxoutsetinfo = None
         self.cached_rawblocks = None
-        self.session_mgr._history_address_cache = pylru.lrucache(1000)
+        self.session_mgr._history_address_cache = LRUCache(1000)
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -667,41 +668,55 @@ class ElectrumX(SessionBase):
         else:
             addr_lookup = set(addresses)
 
-        spent = []
-        spent_ids = set()
+        spent = []  # This will hold the final list of spends
         processed_txs = set()  # Track already processed transactions
 
-        for address in addr_lookup:
-            try:
-                address = str(address)
-                # Retrieve hash_x from cache or convert address
-                hash_x = self.session_mgr._history_address_cache.get(address) or self.coin.address_to_hashX(address)
+        # Create an async lock to synchronize access to `spent` and `processed_txs`
+        lock = asyncio.Lock()
+
+        # Create tasks for each address and process them concurrently
+        tasks = [self._process_address_history(address, processed_txs, spent, addr_lookup, lock) for address in
+                 addr_lookup]
+
+        # Await all tasks concurrently
+        await asyncio.gather(*tasks)
+        spent = sorted(spent, key=lambda x: x['time'], reverse=True)
+        return spent  # Return the accumulated list of spends
+
+    async def _process_address_history(self, address, processed_txs, spent, addr_lookup, lock):
+        try:
+            address = str(address)
+            hash_x = self.session_mgr._history_address_cache.get(address)
+            if hash_x is None:
+                hash_x = self.coin.address_to_hashX(address)
                 self.session_mgr._history_address_cache[address] = hash_x
 
-                # Fetch history for the address
-                history = await self.db.limited_history(hash_x, limit=100)
+            # Fetch history for the address
+            history = await self.db.limited_history(hash_x, limit=100)
 
-                for tx_hash, height in history:
+            for tx_hash, height in history:
+                async with lock:  # Ensure that only one task can check/process `processed_txs` at a time
                     if tx_hash in processed_txs:
                         continue  # Skip already processed transactions
 
-                    tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
-                    if not tx:
-                        continue  # Skip if transaction not found
-
                     processed_txs.add(tx_hash)
-                    spends = await self._process_transaction(tx, addr_lookup, spent_ids)
-                    spent.extend(spends)  # Add processed spends
 
-            except Exception as e:
-                self.logger.exception(f'[GetAddressHistory] Error processing address {address}: {e}')
+                tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
+                if not tx:
+                    continue  # Skip if transaction not found
 
-        return spent
+                spends = await self._process_transaction(tx, addr_lookup)  # Process the transaction
 
-    async def _process_transaction(self, tx, addr_lookup, spent_ids):
+                async with lock:  # Ensure only one task can update `spent` at a time
+                    spent.extend(spends)  # Add processed spends to the final list
+
+        except Exception as e:
+            self.logger.exception(f'[GetAddressHistory] Error processing address {address}: {e}')
+
+    async def _process_transaction(self, tx, addr_lookup):
         """
-        Process a single transaction, determine 'send', 'receive', or 'internal' transactions,
-        and return the processed spends.
+        Process a single transaction, compute net change for owned addresses,
+        and return a single spend row per transaction.
         """
         spends = []
         from_addresses = set()
@@ -710,8 +725,6 @@ class ElectrumX(SessionBase):
         total_output_amount = 0
         owned_input_amount = 0
         owned_output_amount = 0
-        non_owned_input_amount = 0
-        non_owned_output_amount = 0
 
         # Process transaction inputs (vin)
         for item in tx['vin']:
@@ -728,8 +741,6 @@ class ElectrumX(SessionBase):
 
             if prev_addresses & addr_lookup:
                 owned_input_amount += prev_out['value']
-            else:
-                non_owned_input_amount += prev_out['value']
 
         # Process transaction outputs (vout)
         for item in tx['vout']:
@@ -744,58 +755,49 @@ class ElectrumX(SessionBase):
 
             if vout_addresses & addr_lookup:
                 owned_output_amount += amount
+
+        # Calculate raw fees and raw net change
+        raw_fees = abs(total_input_amount - total_output_amount)  # Ensure fees are positive
+        raw_net_change = owned_output_amount - owned_input_amount
+
+        # self.logger.info(f"DEBUG: txid: {tx['txid']}")
+        # self.logger.info(f"DEBUG: owned_input_amount: {owned_input_amount}, owned_output_amount: {owned_output_amount}")
+        # self.logger.info(f"DEBUG: total_input_amount: {total_input_amount}, total_output_amount: {total_output_amount}")
+
+        # Determine transaction type
+        if raw_net_change > 0:
+            transaction_type = 'receive'  # Net gain of funds
+        elif raw_net_change < 0:
+            # Check if all input and output addresses are owned
+            if from_addresses.issubset(addr_lookup) and to_addresses.issubset(addr_lookup):
+                transaction_type = 'internal'  # All inputs and outputs are internal
             else:
-                non_owned_output_amount += amount
+                transaction_type = 'send'  # Net loss of funds
+            raw_net_change += raw_fees
+        else:  # net_change == 0
+            transaction_type = 'unknown'  # No change, assuming it's a transaction between owned addresses
+            self.logger.info(f"DEBUG: transaction_type unknown, tx: {tx}")
 
-        # Calculate fees
-        fees = truncate(total_input_amount - total_output_amount, 10)
+        # truncate
+        net_change = truncate(raw_net_change, 10)
+        fees = truncate(raw_fees, 10)
 
-        # Categorize the transaction
-        if owned_input_amount > 0 and non_owned_output_amount > 0:
-            # Send transaction: owned inputs, some outputs to external addresses
-            transaction_type = 'send'
-            for item in tx['vout']:
-                vout_addresses = self._extract_addresses(item['scriptPubKey'])
-                if not (vout_addresses & addr_lookup):
-                    spend = self._create_spend(spent_ids, vout_addresses, -float(item['value']),
-                                               transaction_type, item, tx,
-                                               list(from_addresses))
-                    if spend:
-                        spends.append(spend)
-            spends = self._consolidate_spends(spends)
-            spends = self._assign_transaction_fees(spends, fees)
+        # self.logger.info(f"DEBUG: Transaction Type: {transaction_type}, net_change: {net_change}, fees: {fees}")
 
-        elif owned_input_amount == 0 and owned_output_amount > 0:
-            # Receive transaction: no owned inputs, outputs to owned addresses
-            transaction_type = 'receive'
-            for item in tx['vout']:
-                vout_addresses = self._extract_addresses(item['scriptPubKey'])
-                if vout_addresses & addr_lookup:
-                    spend = self._create_spend(
-                        spent_ids, vout_addresses, float(item['value']),
-                        transaction_type, item, tx, list(from_addresses)
-                    )
-                    if spend:
-                        spends.append(spend)
-            spends = self._consolidate_spends(spends)
-            spends = self._assign_transaction_fees(spends, fees)
+        # Create a single spend entry for this transaction
+        spend = self._create_spend(
+            list(to_addresses),  # Aggregate 'to' addresses
+            net_change,
+            transaction_type,
+            fees,
+            tx['vout'][0],  # Use the first output as a placeholder for metadata
+            tx,
+            list(from_addresses)
+        )
 
-        elif owned_input_amount > 0 and owned_output_amount > 0 and non_owned_input_amount == 0 and non_owned_output_amount == 0:
-            # # Internal transaction: all inputs and outputs are owned addresses
-            temp_item = tx['vout'][0]  # to fix later, picking first vout as placeholder, data not used anymore ...
-            internal_spend = self._create_spend(
-                spent_ids,
-                self._extract_addresses(temp_item['scriptPubKey']),
-                0,
-                'internal',
-                temp_item,  # Pass the actual output item
-                tx,
-                list(from_addresses)
-            )
-            if internal_spend:
-                spends.append(internal_spend)
-            spends = self._consolidate_spends(spends)
-            spends = self._assign_transaction_fees(spends, fees)
+        if spend:
+            spend["fee"] = fees  # Assign the calculated fee to the spend
+            spends.append(spend)
 
         return spends
 
@@ -807,17 +809,12 @@ class ElectrumX(SessionBase):
             return {script_pub_key['address']}
         return set()
 
-    def _create_spend(self, spent_ids, addresses, amount, category, item, tx, from_addresses):
+    def _create_spend(self, addresses, amount, category, fees, item, tx, from_addresses):
         """Create a spend entry if not already spent."""
-        txid_n = (tx['txid'], item['n'], category)
-        if txid_n in spent_ids:
-            return None, None
-
-        spent_ids.add(txid_n)
         return {
             'address': next(iter(addresses)),  # Use the first address for simplicity
             'amount': float(amount),
-            'fee': 0.0,  # this value is set later with a helper
+            'fee': fees,
             'vout': item['n'],
             'category': category,
             'confirmations': tx['confirmations'],
@@ -827,23 +824,6 @@ class ElectrumX(SessionBase):
             'txid': tx['txid'],
             'from_addresses': from_addresses,
         }
-
-    def _assign_transaction_fees(self, spends, fees):
-        """Assign fees to the largest 'send' transaction."""
-        for spend in spends:
-            spend['fee'] = truncate(fees, 10)  # Assign fees here
-        return spends
-
-    def _consolidate_spends(self, spends):
-        """Consolidate multiple send/receive from/to same address into one element."""
-        consolidated = {}
-        for spend in spends:
-            key = (spend['address'], spend['category'])
-            if key not in consolidated:
-                consolidated[key] = spend
-            else:
-                consolidated[key]['amount'] += spend['amount']
-        return list(consolidated.values())
 
     async def get_history(self, addresses):
         self.logger.info('get_history: {}'.format(addresses))
