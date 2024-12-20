@@ -756,8 +756,8 @@ class ElectrumX(SessionBase):
             if vout_addresses & addr_lookup:
                 owned_output_amount += amount
 
-        # Calculate raw fees and raw net change
-        raw_fees = abs(total_input_amount - total_output_amount)  # Ensure fees are positive
+        # Calculate raw fee and raw net change
+        raw_fee = abs(total_input_amount - total_output_amount)  # Ensure fee are positive
         raw_net_change = owned_output_amount - owned_input_amount
 
         # self.logger.info(f"DEBUG: txid: {tx['txid']}")
@@ -773,30 +773,29 @@ class ElectrumX(SessionBase):
                 transaction_type = 'internal'  # All inputs and outputs are internal
             else:
                 transaction_type = 'send'  # Net loss of funds
-            raw_net_change += raw_fees
+            raw_net_change += raw_fee
         else:  # net_change == 0
             transaction_type = 'unknown'  # No change, assuming it's a transaction between owned addresses
             self.logger.info(f"DEBUG: transaction_type unknown, tx: {tx}")
 
         # truncate
         net_change = truncate(raw_net_change, 10)
-        fees = truncate(raw_fees, 10)
+        fee = truncate(raw_fee, 10)
 
-        # self.logger.info(f"DEBUG: Transaction Type: {transaction_type}, net_change: {net_change}, fees: {fees}")
+        # self.logger.info(f"DEBUG: Transaction Type: {transaction_type}, net_change: {net_change}, fee: {fee}")
 
         # Create a single spend entry for this transaction
         spend = self._create_spend(
             list(to_addresses),  # Aggregate 'to' addresses
             net_change,
             transaction_type,
-            fees,
+            fee,
             tx['vout'][0],  # Use the first output as a placeholder for metadata
             tx,
             list(from_addresses)
         )
 
         if spend:
-            spend["fee"] = fees  # Assign the calculated fee to the spend
             spends.append(spend)
 
         return spends
@@ -809,12 +808,12 @@ class ElectrumX(SessionBase):
             return {script_pub_key['address']}
         return set()
 
-    def _create_spend(self, addresses, amount, category, fees, item, tx, from_addresses):
+    def _create_spend(self, addresses, amount, category, fee, item, tx, from_addresses):
         """Create a spend entry if not already spent."""
         return {
             'address': next(iter(addresses)),  # Use the first address for simplicity
             'amount': float(amount),
-            'fee': fees,
+            'fee': float(fee),
             'vout': item['n'],
             'category': category,
             'confirmations': tx['confirmations'],
