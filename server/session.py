@@ -1,8 +1,8 @@
+import asyncio
 import codecs
 import datetime
 import sys
 import time
-import pylru
 import electrumx
 import electrumx.lib.util as util
 from binascii import unhexlify, hexlify
@@ -12,6 +12,7 @@ from aiorpcx import ReplyAndDisconnect, RPCError
 from electrumx.lib.hash import sha256, hash_to_hex_str, hex_str_to_hash
 from electrumx.server.daemon import DaemonError
 from electrumx.server.session import SessionBase, assert_tx_hash, scripthash_to_hashX, non_negative_integer
+from electrumx.lib.lrucache import LRUCache
 from lbryschema.uri import parse_lbry_uri
 from lbryschema.error import URIParseError
 
@@ -41,7 +42,7 @@ class ElectrumX(SessionBase):
         self.cost = 5.0  # Connection cost
         self.cached_gettxoutsetinfo = None
         self.cached_rawblocks = None
-        self.session_mgr._history_address_cache = pylru.lrucache(1000)
+        self.session_mgr._history_address_cache = LRUCache(1000)
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -662,268 +663,166 @@ class ElectrumX(SessionBase):
         return self.session_mgr.bsub_results
 
     async def get_address_history(self, addresses):
-        if type(addresses) is str:
+        if isinstance(addresses, str):  # Normalize to a set
             addr_lookup = {addresses}
         else:
             addr_lookup = set(addresses)
-        spent = []
-        spent_ids = set()
-        processed_txs = set()  # track transactions that have already been processed
-        for address in addr_lookup:
+
+        spent = []  # This will hold the final list of spends
+        processed_txs = set()  # Track already processed transactions
+
+        # Create an async lock to synchronize access to `spent` and `processed_txs`
+        lock = asyncio.Lock()
+
+        # Create tasks for each address and process them concurrently
+        tasks = [self._process_address_history(address, processed_txs, spent, addr_lookup, lock) for address in
+                 addr_lookup]
+
+        # Await all tasks concurrently
+        await asyncio.gather(*tasks)
+        spent = sorted(spent, key=lambda x: x['time'], reverse=True)
+        return spent  # Return the accumulated list of spends
+
+    async def _process_address_history(self, address, processed_txs, spent, addr_lookup, lock):
+        try:
             address = str(address)
-            #self.logger.debug(f'Processing address: {address}')
+            hash_x = self.session_mgr._history_address_cache.get(address)
+            if hash_x is None:
+                hash_x = self.coin.address_to_hashX(address)
+                self.session_mgr._history_address_cache[address] = hash_x
 
-            try:
-                hash_x = self.session_mgr._history_address_cache[address]
-                #self.logger.debug(f'Address found in cache: {hash_x}')
-            except KeyError:
-                #self.logger.debug(f'Address not found in cache, converting address to hashX')
-                try:
-                    hash_x = self.coin.address_to_hashX(address)
-                    self.session_mgr._history_address_cache[address] = hash_x
-                    #self.logger.debug(f'Address converted to hashX: {hash_x}')
-                except Exception:
-                    self.logger.exception('[GetAddressHistory] Exception while converting address')
-                    continue
+            # Fetch history for the address
+            history = await self.db.limited_history(hash_x, limit=100)
 
-            try:
-                history = await self.db.limited_history(hash_x, limit=100)
-                #self.logger.debug(f'History retrieved for address: {address}')
-
-                for tx_hash, height in history:
+            for tx_hash, height in history:
+                async with lock:  # Ensure that only one task can check/process `processed_txs` at a time
                     if tx_hash in processed_txs:
-                        #self.logger.debug(f'Skipping transaction, already processed: {tx_hash}')
-                        continue  # skip, already processed
-                    #self.logger.debug(f'Processing transaction: {tx_hash}')
-                    tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
-                    if not tx:
-                        #self.logger.debug(f'Transaction not found: {tx_hash}')
-                        continue
+                        continue  # Skip already processed transactions
+
                     processed_txs.add(tx_hash)
 
-                    spends = []
-                    from_addresses = set()
-                    total_send_amount = 0
-                    my_total_send_amount = 0
-                    for item in tx['vin']:
-                        prev_tx = await self.transaction_get(item['txid'], verbose=True)
-                        if not prev_tx:
-                            #self.logger.debug(f'Previous transaction not found: {item["txid"]}')
-                            continue
+                tx = await self.transaction_get(hash_to_hex_str(tx_hash), verbose=True)
+                if not tx:
+                    continue  # Skip if transaction not found
 
-                        prev_out_amount = prev_tx['vout'][item['vout']]['value']
-                        script_pub_key = prev_tx['vout'][item['vout']]['scriptPubKey']
-                        addrs = []
+                spends = await self._process_transaction(tx, addr_lookup)  # Process the transaction
 
-                        if 'addresses' in script_pub_key:
-                            addrs = script_pub_key['addresses']
-                        elif 'address' in script_pub_key:
-                            addrs = [script_pub_key['address']]
+                async with lock:  # Ensure only one task can update `spent` at a time
+                    spent.extend(spends)  # Add processed spends to the final list
 
-                        # Record total sent coin if sent from one of our addresses
-                        if len(addrs) > 0:
-                            is_my_address = False
-                            for addr in addrs:
-                                if addr in addr_lookup:
-                                    my_total_send_amount += prev_out_amount
-                                    is_my_address = True
-                                    break
+        except Exception as e:
+            self.logger.exception(f'[GetAddressHistory] Error processing address {address}: {e}')
 
-                            if not is_my_address:
-                                total_send_amount += prev_out_amount
+    async def _process_transaction(self, tx, addr_lookup):
+        """
+        Process a single transaction, compute net change for owned addresses,
+        and return a single spend row per transaction.
+        """
+        spends = []
+        from_addresses = set()
+        to_addresses = set()
+        total_input_amount = 0
+        total_output_amount = 0
+        owned_input_amount = 0
+        owned_output_amount = 0
 
-                            from_addresses.update(addrs)
+        # Process transaction inputs (vin)
+        for item in tx['vin']:
+            prev_tx = await self.transaction_get(item['txid'], verbose=True)
+            if not prev_tx:
+                continue  # Skip missing previous transactions
 
-                    my_total_send_amount_running = my_total_send_amount  # track how much sent coin is left to report
-                    is_sending_coin = my_total_send_amount > 0
+            prev_out = prev_tx['vout'][item['vout']]
+            script_pub_key = prev_out['scriptPubKey']
+            prev_addresses = self._extract_addresses(script_pub_key)
 
-                    biggest_sent_amount_not_my_address = 0
-                    biggest_sent_address_not_my_address = ''
-                    biggest_sent_amount_my_address = 0
-                    biggest_sent_address_my_address = ''
+            total_input_amount += prev_out['value']
+            from_addresses.update(prev_addresses)
 
-                    fees = total_send_amount * -1
+            if prev_addresses & addr_lookup:
+                owned_input_amount += prev_out['value']
 
-                    def valid_spend(p_spent_ids, p_address, p_amount, p_category, p_item, p_tx, p_from_addresses):
-                        p_txid_n = (p_tx['txid'], p_item['n'], p_category)
-                        if p_txid_n not in p_spent_ids:
-                            return {
-                                'address': p_address,
-                                'amount': p_amount,
-                                'fee': 0.0,
-                                'vout': p_item['n'],
-                                'category': p_category,
-                                'confirmations': p_tx['confirmations'],
-                                'blockhash': p_tx['blockhash'],
-                                'blocktime': p_tx['blocktime'],
-                                'time': p_tx['blocktime'],
-                                'txid': p_tx['txid'],
-                                'from_addresses': p_from_addresses
-                            }, p_txid_n
-                        else:
-                            return None, None
-                        
-                    def get_address(p_item):
-                        #self.logger.debug(f"p_item['scriptPubKey']: {p_item['scriptPubKey']}")
-                        #self.logger.debug(f"p_item['scriptPubKey']['address']: {p_item['scriptPubKey'].get('address')} {type(p_item['scriptPubKey'].get('address'))}")
+        # Process transaction outputs (vout)
+        for item in tx['vout']:
+            amount = item['value']
+            vout_addresses = self._extract_addresses(item['scriptPubKey'])
 
-                        if 'type' not in p_item['scriptPubKey'] or p_item['scriptPubKey']['type'] == 'nonstandard':
-                            #self.logger.debug("Incompatible vout address, skipping")
-                            return None  # skip incompatible vout
+            if not vout_addresses:
+                continue  # Skip incompatible outputs
 
-                        if 'address' in p_item['scriptPubKey']:
-                            if isinstance(p_item['scriptPubKey']['address'], str):
-                                return p_item['scriptPubKey']['address']
+            total_output_amount += amount
+            to_addresses.update(vout_addresses)
 
-                        elif 'addresses' in p_item['scriptPubKey']:
-                            if isinstance(p_item['scriptPubKey']['addresses'], str):
-                                return p_item['scriptPubKey']['addresses']
+            if vout_addresses & addr_lookup:
+                owned_output_amount += amount
 
-                            elif isinstance(p_item['scriptPubKey']['addresses'], list) and len(p_item['scriptPubKey']['addresses']) > 0:
-                                return p_item['scriptPubKey']['addresses'][0]
+        # Calculate raw fee and raw net change
+        raw_fee = abs(total_input_amount - total_output_amount)  # Ensure fee are positive
+        raw_net_change = owned_output_amount - owned_input_amount
 
-                        #self.logger.debug("No valid address found")
-                        return None
+        # self.logger.info(f"DEBUG: txid: {tx['txid']}")
+        # self.logger.info(f"DEBUG: owned_input_amount: {owned_input_amount}, owned_output_amount: {owned_output_amount}")
+        # self.logger.info(f"DEBUG: total_input_amount: {total_input_amount}, total_output_amount: {total_output_amount}")
 
+        # Determine transaction type
+        if raw_net_change > 0:
+            transaction_type = 'receive'  # Net gain of funds
+        elif raw_net_change < 0:
+            # Check if all input and output addresses are owned
+            if from_addresses.issubset(addr_lookup) and to_addresses.issubset(addr_lookup):
+                transaction_type = 'internal'  # All inputs and outputs are internal
+            else:
+                transaction_type = 'send'  # Net loss of funds
+            raw_net_change += raw_fee
+        else:  # net_change == 0
+            transaction_type = 'unknown'  # No change, assuming it's a transaction between owned addresses
+            self.logger.info(f"DEBUG: transaction_type unknown, tx: {tx}")
 
+        # truncate
+        net_change = truncate(raw_net_change, 10)
+        fee = truncate(raw_fee, 10)
 
+        # self.logger.info(f"DEBUG: Transaction Type: {transaction_type}, net_change: {net_change}, fee: {fee}")
 
-                    # First pass: Only process transactions sent to another address, record fees
-                    for item in tx['vout']:
-                        # Add in fees (fees = total_in - total_out)
-                        amount = item['value']
-                        fees += amount
-                        vout_address = get_address(item)
-                        if not vout_address:
-                            #self.logger.debug('Incompatible vout address, skipping')
-                            continue  # incompatible address, skip
+        # Create a single spend entry for this transaction
+        spend = self._create_spend(
+            list(to_addresses),  # Aggregate 'to' addresses
+            net_change,
+            transaction_type,
+            fee,
+            tx['vout'][0],  # Use the first output as a placeholder for metadata
+            tx,
+            list(from_addresses)
+        )
 
-                        if vout_address in addr_lookup:
-                            #self.logger.debug('Address is not ours, skipping')
-                            continue  # not our address, skip
+        if spend:
+            spends.append(spend)
 
-                        # Amount is negative for send and positive for receive
-                        # Record sent coin to address if we have outstanding send amount.
-                        # Note that my total sent amount is subtracted by any amounts
-                        # previously marked sent.
-                        # Compare with epsilon instead of 0 to avoid precision inaccuracies.
-                        if my_total_send_amount_running > sys.float_info.epsilon:
-                            if biggest_sent_amount_not_my_address < amount:
-                                biggest_sent_amount_not_my_address = amount
-                                biggest_sent_address_not_my_address = vout_address
-                            # amount reported here cannot be larger than my total send amount
-                            adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
-                            my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
-                            spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send', item, tx,
-                                                        list(from_addresses))
-                            if spend:
-                                spent_ids.add(txid_n)
-                                spends.append(spend)
-                                #self.logger.debug(f'Spent coin recorded: {spend}')
+        return spends
 
-                    # Second pass: Only process transactions for all our own addresses
-                    for item in tx['vout']:
-                        vout_address = get_address(item)
-                        if not vout_address:
-                            #self.logger.debug('Incompatible vout address, skipping')
-                            continue  # incompatible address, skip
-                        if vout_address not in addr_lookup:
-                            #self.logger.debug('Address already processed in a previous pass, skipping')
-                            continue  # skip, already processed in block above
+    def _extract_addresses(self, script_pub_key):
+        """Extract addresses from scriptPubKey."""
+        if 'addresses' in script_pub_key:
+            return set(script_pub_key['addresses'])
+        if 'address' in script_pub_key:
+            return {script_pub_key['address']}
+        return set()
 
-                        amount = item['value']
-
-                        do_not_mark_send = False
-                        if vout_address not in from_addresses:
-                            do_not_mark_send = True
-
-                        # Record received coin if this vout address is mine
-                        spend, txid_n = valid_spend(spent_ids, vout_address, float(amount), 'receive', item, tx,
-                                                    list(from_addresses))
-                        if spend:
-                            spent_ids.add(txid_n)
-                            spends.append(spend)
-                            #self.logger.debug(f'Received coin recorded: {spend}')
-
-                        # Amount is negative for send and positive for receive
-                        # Record sent coin to address if we have outstanding send amount.
-                        # Note that my total sent amount is subtracted by any amounts
-                        # previously marked sent.
-                        # Compare with epsilon instead of 0 to avoid precision inaccuracies.
-                        if my_total_send_amount_running > sys.float_info.epsilon:
-                            # amount reported here cannot be larger than my total send amount
-                            adjusted_amount = amount if my_total_send_amount_running > amount else my_total_send_amount_running
-                            my_total_send_amount_running -= adjusted_amount  # track what we've already recorded as sent
-                            if not do_not_mark_send:
-                                spend, txid_n = valid_spend(spent_ids, vout_address, -float(adjusted_amount), 'send', item, tx,
-                                                            list(from_addresses))
-                                if spend:
-                                    spent_ids.add(txid_n)
-                                    spends.append(spend)
-                                    #self.logger.debug(f'Spent coin recorded: {spend}')
-
-                                    if biggest_sent_amount_my_address < amount:
-                                        biggest_sent_amount_my_address = amount
-                                        biggest_sent_address_my_address = vout_address
-
-                    # Assign fees on tx with largest sent amount. Assign fees to transactions
-                    # sent to an address that is not our own. Otherwise assign fee to largest
-                    # sent transaction on our own address if that applies.
-                    if is_sending_coin and fees < 0:
-                        for spend in spends:
-                            biggest_sent_address = biggest_sent_address_not_my_address \
-                                if biggest_sent_amount_not_my_address > 0 else biggest_sent_address_my_address
-                            if spend['address'] == biggest_sent_address and spend['category'] == 'send':
-                                spend['fee'] = truncate(fees, 10)
-                                #self.logger.debug(f'Assigned fee: {spend}')
-                                break
-
-                    # Consolidate spends to self
-                    remove_these = []
-                    if len(spends) >= 2:  # can only compare at least 2 spends
-                        for spend in spends:
-                            filtered_spends = list(filter(lambda sp: sp['address'] == spend['address'], spends))
-                            if not filtered_spends:
-                                continue
-                            sends = list(filter(lambda sp: sp['category'] == 'send', filtered_spends))
-                            receives = list(filter(lambda sp: sp['category'] == 'receive', filtered_spends))
-                            from_spend = None if len(sends) == 0 else sends[0]
-                            from_receive = None if len(receives) == 0 else receives[0]
-                            if not from_spend or not from_receive:
-                                continue  # skip if don't have both send and receive
-                            if abs(from_spend['amount']) - from_receive['amount'] > -sys.float_info.epsilon:
-                                from_spend['amount'] += from_receive['amount']
-                                from_spend['fee'] += from_receive['fee']
-                                remove_these.append(from_receive)
-                            elif abs(from_spend['amount']) - from_receive['amount'] <= -sys.float_info.epsilon:
-                                from_receive['amount'] += from_spend['amount']
-                                from_receive['fee'] += from_spend['fee']
-                                remove_these.append(from_spend)
-                            if len(spends) - len(remove_these) < 2:  # done processing if nothing left to compare
-                                break
-                    # Remove all the consolidated spends
-                    if len(remove_these) > 0:
-                        for spend in remove_these:
-                            if spend in spends:
-                                spends.remove(spend)
-
-                    # Filter out spends that have zero amount after consolidation
-                    spends = list(filter(lambda sp: abs(sp['amount']) > sys.float_info.epsilon, spends))
-
-                    # Add timestamp to spends
-                    blocktime = tx.get('blocktime')
-                    if blocktime:
-                        for spend in spends:
-                            spend['time'] = blocktime
-
-                    spent.extend(spends)
-                    #self.logger.debug(f'Spends recorded for transaction: {spends}')
-
-            except Exception:
-                self.logger.exception('[GetAddressHistory] Exception while retrieving history')
-
-        return spent
-
+    def _create_spend(self, addresses, amount, category, fee, item, tx, from_addresses):
+        """Create a spend entry if not already spent."""
+        return {
+            'address': next(iter(addresses)),  # Use the first address for simplicity
+            'amount': float(amount),
+            'fee': float(fee),
+            'vout': item['n'],
+            'category': category,
+            'confirmations': tx['confirmations'],
+            'blockhash': tx['blockhash'],
+            'blocktime': tx['blocktime'],
+            'time': tx['blocktime'],
+            'txid': tx['txid'],
+            'from_addresses': from_addresses,
+        }
 
     async def get_history(self, addresses):
         self.logger.info('get_history: {}'.format(addresses))
@@ -985,18 +884,18 @@ class ElectrumX(SessionBase):
                     p_txid_n = (p_tx['txid'], p_item['n'], p_category)
                     if p_txid_n not in p_spent_ids:
                         return {
-                                   'address': p_address,
-                                   'amount': p_amount,
-                                   'fee': 0.0,
-                                   'vout': p_item['n'],
-                                   'category': p_category,
-                                   'confirmations': p_tx['confirmations'],
-                                   'blockhash': p_tx['blockhash'],
-                                   'blocktime': p_tx['blocktime'],
-                                   'time': p_tx['blocktime'],
-                                   'txid': p_tx['txid'],
-                                   'from_addresses': p_from_addresses
-                               }, p_txid_n
+                            'address': p_address,
+                            'amount': p_amount,
+                            'fee': 0.0,
+                            'vout': p_item['n'],
+                            'category': p_category,
+                            'confirmations': p_tx['confirmations'],
+                            'blockhash': p_tx['blockhash'],
+                            'blocktime': p_tx['blocktime'],
+                            'time': p_tx['blocktime'],
+                            'txid': p_tx['txid'],
+                            'from_addresses': p_from_addresses
+                        }, p_txid_n
                     else:
                         return None, None
 
@@ -1756,7 +1655,7 @@ class LBRYElectrumX(ElectrumX):
         claim_id = claim['claimId']
         raw_claim_id = unhexlify(claim_id)[::-1]
         if not self.bp.get_claim_info(raw_claim_id):
-            #raise RPCError("Lbrycrd has {} but not lbryumx, please submit a bug report.".format(claim_id))
+            # raise RPCError("Lbrycrd has {} but not lbryumx, please submit a bug report.".format(claim_id))
             return {}
         address = self.bp.get_claim_info(raw_claim_id).address.decode()
         sequence = self.bp.get_claims_for_name(name.encode('ISO-8859-1')).get(raw_claim_id)
@@ -1780,14 +1679,14 @@ class LBRYElectrumX(ElectrumX):
             "value": hexlify(claim['value'].encode('ISO-8859-1')).decode(),
             "claim_sequence": sequence,  # from index
             "address": address,  # from index
-            "supports": supports, # fixme: to be included in lbrycrd#124
+            "supports": supports,  # fixme: to be included in lbrycrd#124
             "effective_amount": effective_amount,
             "valid_at_height": valid_at_height  # TODO PR lbrycrd to include it
         }
 
     def format_supports_from_daemon(self, supports):
         return [[support['txid'], support['n'], get_from_possible_keys(support, 'amount', 'nAmount')] for
-                 support in supports]
+                support in supports]
 
     async def claimtrie_getclaimbyid(self, claim_id):
         self.assert_claim_id(claim_id)
@@ -1922,10 +1821,10 @@ class LBRYElectrumX(ElectrumX):
         return {uri: await self.claimtrie_getvalueforuri(block_hash, uri) for uri in uris}
 
         # TODO: get it all concurrently when lbrycrd pending changes goes into a stable release
-        #async def getvalue(uri):
+        # async def getvalue(uri):
         #    value = await self.claimtrie_getvalueforuri(block_hash, uri)
         #    return uri, value,
-        #return dict([await asyncio.gather(*tuple(getvalue(uri) for uri in uris))][0])
+        # return dict([await asyncio.gather(*tuple(getvalue(uri) for uri in uris))][0])
 
 
 def proof_has_winning_claim(proof):
