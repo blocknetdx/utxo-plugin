@@ -1,17 +1,16 @@
-git+https://github.com/spesmilo/electrumx.git@master#egg=e-x
+git+https://github.com/blocknetdx/electrumx.git@master#egg=e-x
 x11_hash==1.4
-dash_hash==1.4
+dash_hash==1.5.1
 quark_hash==1.0
 x16r-hash==1.0.1
 x16rv2-hash==1.0
-uvloop==0.17.0
+uvloop==0.21.0
 #python-rocksdb==0.7.0
 -e git+https://github.com/twmht/python-rocksdb.git@445ebbbfdcd41dd3695304e23058fd9ed5178adf#egg=python-rocksdb
-python-rapidjson==1.10
+python-rapidjson==1.20
 kawpow==0.9.4.4
-msgpack~=1.0.2
-aiorpcX~=0.22.1
+msgpack~=1.1.0
 asyncio~=3.4.3
 lbryschema==0.0.16
-beaker==1.12.1
-pylru~=1.2.0
+beaker==1.13.0
+pylru~=1.2.1
