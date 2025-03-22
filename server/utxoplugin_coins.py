@@ -734,3 +734,21 @@ class Unobtanium(AuxPowHelper, Coin):
     TX_PER_BLOCK = 1
     RPC_PORT = 65535
     REORG_LIMIT = 5000
+
+
+class Pkoin(Coin):
+    NAME = "Pocketcoin"
+    SHORTNAME = "PKOIN"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("1E88B21E")
+    XPRV_VERBYTES = bytes.fromhex("1E88ADE4")
+    P2PKH_VERBYTE = bytes.fromhex("37")
+    P2SH_VERBYTES = (bytes.fromhex("50"),)
+    WIF_BYTE = bytes.fromhex("21")
+    GENESIS_HASH = ('00000fd0f6633d395541056e8adc3296'
+                    '1e15f8133674b2e3937c4d210ced6f3f')
+    RPC_PORT = 37071
+    TX_COUNT = 1
+    TX_COUNT_HEIGHT = 1
+    TX_PER_BLOCK = 1
+    DESERIALIZER = lib_tx.DeserializerTxTimeSegWit
