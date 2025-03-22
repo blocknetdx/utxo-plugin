@@ -13,7 +13,7 @@ from server.controller import Controller
 from server.utxoplugin_coins import (Coin, Blocknet, BlocknetTestnet,
                                      BitcoinSegwit, Bitcore, Litecoin, Dash, DigiByte,
                                      Syscoin, Phore, Alqo, Bitbay, Dogecoin, Ravencoin,
-                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet, LBC, Unobtanium)
+                                     Polis, Pivx, Trezarcoin, BitcoinCash, Stakenet, LBC, Unobtanium, Pkoin)
 
 coin_map = {
     "BLOCK": Blocknet,
@@ -36,6 +36,7 @@ coin_map = {
     "XSN": Stakenet,
     "LBC": LBC,
     "UNO": Unobtanium,
+    "PKOIN": Pkoin
 }
 
 coin = environ.get('PLUGIN_COIN')
