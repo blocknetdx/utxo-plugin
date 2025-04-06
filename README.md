@@ -35,3 +35,4 @@ Example docker-compose.yml entry for utxo coin, BLOCK:
 DAEMON_ADDR is the IP addr of the container hosting the BLOCK daemon
 
 DAEMON_RPC_PORT is the RPC port of the BLOCK daemon
+
